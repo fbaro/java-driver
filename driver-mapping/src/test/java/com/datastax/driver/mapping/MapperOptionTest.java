@@ -22,11 +22,15 @@ import org.testng.annotations.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.CCMBridge;
+import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.mapping.annotations.PartitionKey;
 import com.datastax.driver.mapping.annotations.Table;
 
-public class MapperSaveOptionsTest extends CCMBridge.PerClassSingleNodeCluster {
+import static com.datastax.driver.mapping.Mapper.Option;
+
+public class MapperOptionTest extends CCMBridge.PerClassSingleNodeCluster {
 
     @Override
     protected Collection<String> getTableDefinitions() {
@@ -37,9 +41,7 @@ public class MapperSaveOptionsTest extends CCMBridge.PerClassSingleNodeCluster {
     void should_use_using_options_to_save() {
         Long tsValue = 906L;
         Mapper<User> mapper = new MappingManager(session).mapper(User.class);
-        QueryType.SaveOptions options = new QueryType.SaveOptions().setTtlValue(45);
-        options.setTimestampValue(tsValue);
-        mapper.saveAsync(new User(42, "helloworld"), options);
+        mapper.saveAsync(new User(42, "helloworld"), Option.timestamp(tsValue));
         assertThat(mapper.get(42).getV()).isEqualTo("helloworld");
         Long tsReturned = session.execute("SELECT writetime(v) FROM user WHERE key=" + 42).one().getLong(0);
         assertThat(tsReturned).isEqualTo(tsValue);
@@ -49,13 +51,38 @@ public class MapperSaveOptionsTest extends CCMBridge.PerClassSingleNodeCluster {
     void should_use_using_options_only_once() {
         Long tsValue = 1L;
         Mapper<User> mapper = new MappingManager(session).mapper(User.class);
-        QueryType.SaveOptions options = new QueryType.SaveOptions();
-        options.setTimestampValue(tsValue);
-        mapper.save(new User(42, "helloworld"), options);
-        mapper.save(new User(43, "test"));
-        Long tsReturned = session.execute("SELECT writetime(v) FROM user WHERE key=" + 43).one().getLong(0);
+        mapper.save(new User(43, "helloworld"), Option.timestamp(tsValue));
+        mapper.save(new User(44, "test"));
+        Long tsReturned = session.execute("SELECT writetime(v) FROM user WHERE key=" + 44).one().getLong(0);
         // Assuming we cannot go back in time (yet) and execute the write at ts=1
         assertThat(tsReturned).isNotEqualTo(tsValue);
+    }
+
+    @Test(groups = "short")
+    void should_allow_setting_default_options() {
+        Mapper<User> mapper = new MappingManager(session).mapper(User.class);
+        mapper.setDefaultSaveOptions(Option.timestamp(644746L), Option.ttl(76324));
+        BoundStatement bs = (BoundStatement)mapper.saveQuery(new User(46, "rjhrgce"));
+        assertThat(bs.preparedStatement().getQueryString()).contains("USING TIMESTAMP");
+        mapper.resetDefaultSaveOptions();
+        bs = (BoundStatement)mapper.saveQuery(new User(47, "rjhrgce"));
+        assertThat(bs.preparedStatement().getQueryString()).doesNotContain("USING TIMESTAMP");
+        mapper.setDefaultDeleteOptions(Option.timestamp(3245L));
+        bs = (BoundStatement)mapper.deleteQuery(47);
+        assertThat(bs.preparedStatement().getQueryString()).contains("USING TIMESTAMP");
+        mapper.resetDefaultDeleteOptions();
+        bs = (BoundStatement)mapper.deleteQuery(47);
+        assertThat(bs.preparedStatement().getQueryString()).doesNotContain("USING TIMESTAMP");
+    }
+
+    @Test(groups = "short")
+    void should_use_using_options_for_delete() {
+        Mapper<User> mapper = new MappingManager(session).mapper(User.class);
+        User todelete = new User(45, "todelete");
+        mapper.save(todelete);
+        Option opt = Option.timestamp(35);
+        BoundStatement bs = (BoundStatement)mapper.deleteQuery(45, opt);
+        assertThat(bs.preparedStatement().getQueryString()).contains("USING TIMESTAMP");
     }
 
     @Table(name = "user")

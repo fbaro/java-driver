@@ -16,9 +16,7 @@
 package com.datastax.driver.mapping;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import com.google.common.base.Objects;
 
@@ -31,7 +29,9 @@ import static com.datastax.driver.core.querybuilder.QueryBuilder.*;
 
 class QueryType {
 
-    private enum Kind { SAVE, GET, DEL, SLICE, REVERSED_SLICE };
+    private enum Kind {SAVE, GET, DEL, SLICE, REVERSED_SLICE}
+
+    ;
     private final Kind kind;
 
     // For slices
@@ -60,99 +60,102 @@ class QueryType {
         return new QueryType(reversed ? Kind.REVERSED_SLICE : Kind.SLICE, startBoundSize, startInclusive, endBoundSize, endInclusive);
     }
 
-    String makePreparedQueryString(TableMetadata table, EntityMapper<?> mapper, SaveOptions options) {
+    String makePreparedQueryString(TableMetadata table, EntityMapper<?> mapper, Mapper.Option... options) {
         switch (kind) {
-            case SAVE:
-                {
-                    Insert insert = table == null
-                                  ? insertInto(mapper.getKeyspace(), mapper.getTable())
-                                  : insertInto(table);
-                    for (ColumnMapper<?> cm : mapper.allColumns())
-                        insert.value(cm.getColumnName(), bindMarker());
-                    if (options != null){
-                        addSaveOptions(insert, options);
+            case SAVE: {
+                Insert insert = table == null
+                    ? insertInto(mapper.getKeyspace(), mapper.getTable())
+                    : insertInto(table);
+                for (ColumnMapper<?> cm : mapper.allColumns())
+                    insert.value(cm.getColumnName(), bindMarker());
+                if (options != null) {
+                    Insert.Options usings = insert.using();
+                    for (Mapper.Option opt : options) {
+                        if (opt instanceof Mapper.Option.Ttl)
+                            // Use Bind Marker here so we don't re-prepare statements for different options values
+                            usings.and(ttl(bindMarker()));
+                        else
+                            usings.and(timestamp(bindMarker()));
                     }
-                    return insert.toString();
                 }
-            case GET:
-                {
-                    Select select = table == null
-                                  ? select().all().from(mapper.getKeyspace(), mapper.getTable())
-                                  : select().all().from(table);
-                    Select.Where where = select.where();
-                    for (int i = 0; i < mapper.primaryKeySize(); i++)
-                        where.and(eq(mapper.getPrimaryKeyColumn(i).getColumnName(), bindMarker()));
-                    return select.toString();
+                return insert.toString();
+            }
+            case GET: {
+                Select select = table == null
+                    ? select().all().from(mapper.getKeyspace(), mapper.getTable())
+                    : select().all().from(table);
+                Select.Where where = select.where();
+                for (int i = 0; i < mapper.primaryKeySize(); i++)
+                    where.and(eq(mapper.getPrimaryKeyColumn(i).getColumnName(), bindMarker()));
+                return select.toString();
+            }
+            case DEL: {
+                Delete delete = table == null
+                    ? delete().all().from(mapper.getKeyspace(), mapper.getTable())
+                    : delete().all().from(table);
+                Delete.Where where = delete.where();
+                for (int i = 0; i < mapper.primaryKeySize(); i++)
+                    where.and(eq(mapper.getPrimaryKeyColumn(i).getColumnName(), bindMarker()));
+                Delete.Options usings = delete.using();
+                if (options != null){
+                    for (Mapper.Option opt : options) {
+                        if (opt instanceof Mapper.Option.Timestamp) {
+                            usings.and(timestamp(bindMarker()));
+                        } else {
+                            throw new UnsupportedOperationException("Cannot use another option than TIMESTAMP for DELETE operations");
+                        }
+                    }
                 }
-            case DEL:
-                {
-                    Delete delete = table == null
-                                  ? delete().all().from(mapper.getKeyspace(), mapper.getTable())
-                                  : delete().all().from(table);
-                    Delete.Where where = delete.where();
-                    for (int i = 0; i < mapper.primaryKeySize(); i++)
-                        where.and(eq(mapper.getPrimaryKeyColumn(i).getColumnName(), bindMarker()));
-                    return delete.toString();
-                }
+                return delete.toString();
+            }
             case SLICE:
-            case REVERSED_SLICE:
-                {
-                    Select select = table == null
-                                  ? select().all().from(mapper.getKeyspace(), mapper.getTable())
-                                  : select().all().from(table);
-                    Select.Where where = select.where();
-                    for (int i = 0; i < mapper.partitionKeys.size(); i++)
-                        where.and(eq(mapper.partitionKeys.get(i).getColumnName(), bindMarker()));
+            case REVERSED_SLICE: {
+                Select select = table == null
+                    ? select().all().from(mapper.getKeyspace(), mapper.getTable())
+                    : select().all().from(table);
+                Select.Where where = select.where();
+                for (int i = 0; i < mapper.partitionKeys.size(); i++)
+                    where.and(eq(mapper.partitionKeys.get(i).getColumnName(), bindMarker()));
 
-                    if (startBoundSize > 0) {
-                        if (startBoundSize == 1) {
-                            String name = mapper.clusteringColumns.get(0).getColumnName();
-                            where.and(startInclusive ? gte(name, bindMarker()) : gt(name, bindMarker()));
-                        } else {
-                            List<String> names = new ArrayList<String>(startBoundSize);
-                            List<Object> values = new ArrayList<Object>(startBoundSize);
-                            for (int i = 0; i < startBoundSize; i++) {
-                                names.add(mapper.clusteringColumns.get(i).getColumnName());
-                                values.add(bindMarker());
-                            }
-                            where.and(startInclusive ? gte(names, values) : gt(names, values));
+                if (startBoundSize > 0) {
+                    if (startBoundSize == 1) {
+                        String name = mapper.clusteringColumns.get(0).getColumnName();
+                        where.and(startInclusive ? gte(name, bindMarker()) : gt(name, bindMarker()));
+                    } else {
+                        List<String> names = new ArrayList<String>(startBoundSize);
+                        List<Object> values = new ArrayList<Object>(startBoundSize);
+                        for (int i = 0; i < startBoundSize; i++) {
+                            names.add(mapper.clusteringColumns.get(i).getColumnName());
+                            values.add(bindMarker());
                         }
+                        where.and(startInclusive ? gte(names, values) : gt(names, values));
                     }
-
-                    if (endBoundSize > 0) {
-                        if (endBoundSize == 1) {
-                            String name = mapper.clusteringColumns.get(0).getColumnName();
-                            where.and(endInclusive ? gte(name, bindMarker()) : gt(name, bindMarker()));
-                        } else {
-                            List<String> names = new ArrayList<String>(endBoundSize);
-                            List<Object> values = new ArrayList<Object>(endBoundSize);
-                            for (int i = 0; i < endBoundSize; i++) {
-                                names.add(mapper.clusteringColumns.get(i).getColumnName());
-                                values.add(bindMarker());
-                            }
-                            where.and(endInclusive ? lte(names, values) : lt(names, values));
-                        }
-                    }
-
-                    select = select.limit(bindMarker());
-
-                    if (kind == Kind.REVERSED_SLICE)
-                        select = select.orderBy(desc(mapper.clusteringColumns.get(0).getColumnName()));
-
-                    return select.toString();
                 }
+
+                if (endBoundSize > 0) {
+                    if (endBoundSize == 1) {
+                        String name = mapper.clusteringColumns.get(0).getColumnName();
+                        where.and(endInclusive ? gte(name, bindMarker()) : gt(name, bindMarker()));
+                    } else {
+                        List<String> names = new ArrayList<String>(endBoundSize);
+                        List<Object> values = new ArrayList<Object>(endBoundSize);
+                        for (int i = 0; i < endBoundSize; i++) {
+                            names.add(mapper.clusteringColumns.get(i).getColumnName());
+                            values.add(bindMarker());
+                        }
+                        where.and(endInclusive ? lte(names, values) : lt(names, values));
+                    }
+                }
+
+                select = select.limit(bindMarker());
+
+                if (kind == Kind.REVERSED_SLICE)
+                    select = select.orderBy(desc(mapper.clusteringColumns.get(0).getColumnName()));
+
+                return select.toString();
+            }
         }
         throw new AssertionError();
-    }
-    
-    private void addSaveOptions(Insert insert, SaveOptions so){
-        if (so.getTtlValue() != -1 && so.getTimestampValue() != -1) {
-            insert.using(ttl(bindMarker())).and(timestamp(bindMarker()));
-        } else if (so.getTtlValue() != -1) {
-            insert.using(ttl(bindMarker()));
-        } else if (so.getTimestampValue() != -1) {
-            insert.using(timestamp(bindMarker()));
-        }
     }
 
     @Override
@@ -175,65 +178,4 @@ class QueryType {
         return Objects.hashCode(kind, startBoundSize, startInclusive, endBoundSize, endInclusive);
     }
 
-    /**
-     * An object to allow defining specific options during a
-     * {@link com.datastax.driver.mapping.Mapper#save} operation.
-     *
-     * The options will be added as : 'INSERT [...] USING option-name option-value [AND option-name option value ...].
-     */
-    public static class SaveOptions{
-        private int ttlValue;
-        private long timestampValue;
-
-        /**
-         * Creates an empty object to set up.
-         */
-        public SaveOptions(){
-            ttlValue = -1;
-            timestampValue = -1;
-        }
-
-        /**
-         * Get the TTL value configured in the object.
-         *
-         * @return the TTL value.
-         */
-        public int getTtlValue() {
-            return ttlValue;
-        }
-
-        /**
-         * Set the TTL value to use for the aimed save operation.
-         *
-         * NOTE : To reset this field and giving it no effect this needs to be set at -1.
-         * @param ttlValue
-         * @return the SaveOptions object affected by the set of the field.
-         */
-        public SaveOptions setTtlValue(int ttlValue) {
-            this.ttlValue = ttlValue;
-            return this;
-        }
-
-        /**
-         * Get the TTL value configured in the object.
-         *
-         * @return the TTL value.
-         */
-        public long getTimestampValue() {
-            return timestampValue;
-        }
-
-        /**
-         * Set the TIMESTAMP value to use for the aimed save operation.
-         * <p/>
-         * NOTE : To reset this field and giving it no effect this needs to be set at -1.
-         *
-         * @param timestampValue
-         * @return the SaveOptions object affected by the set of the field.
-         */
-        public SaveOptions setTimestampValue(long timestampValue) {
-            this.timestampValue = timestampValue;
-            return this;
-        }
-    }
 }

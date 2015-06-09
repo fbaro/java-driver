@@ -18,12 +18,15 @@ package com.datastax.driver.mapping;
 import java.beans.IntrospectionException;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.lang.reflect.Method;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
 
-import com.datastax.driver.core.*;
+import com.datastax.driver.core.ConsistencyLevel;
+import com.datastax.driver.core.DataType;
+import com.datastax.driver.core.UDTValue;
 
 /**
  * An {@link EntityMapper} implementation that use reflection to read and write fields
@@ -108,7 +111,7 @@ class ReflectionMapper<T> extends EntityMapper<T> {
         }
 
         @SuppressWarnings("rawtypes")
-		@Override
+        @Override
         public Object getValue(T entity) {
             Object value = super.getValue(entity);
             switch (enumType) {
@@ -146,14 +149,14 @@ class ReflectionMapper<T> extends EntityMapper<T> {
         @Override
         public Object getValue(T entity) {
             @SuppressWarnings("unchecked")
-            U udtEntity = (U) super.getValue(entity);
+            U udtEntity = (U)super.getValue(entity);
             return udtEntity == null ? null : udtMapper.toUDT(udtEntity);
         }
 
         @Override
         public void setValue(Object entity, Object value) {
             assert value instanceof UDTValue;
-            UDTValue udtValue = (UDTValue) value;
+            UDTValue udtValue = (UDTValue)value;
             assert udtValue.getType().equals(udtMapper.getUserType());
 
             super.setValue(entity, udtMapper.toEntity((udtValue)));
@@ -210,7 +213,7 @@ class ReflectionMapper<T> extends EntityMapper<T> {
 
                 if (TypeMappings.isMappedUDT(field.getType())) {
                     UDTMapper<?> udtMapper = mappingManager.getUDTMapper(field.getType());
-                    return (ColumnMapper<T>) new UDTColumnMapper(field, position, pd, udtMapper);
+                    return (ColumnMapper<T>)new UDTColumnMapper(field, position, pd, udtMapper);
                 }
 
                 if (field.getGenericType() instanceof ParameterizedType) {
